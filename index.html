@@ -226,6 +226,17 @@
     .stat-box{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:12px 14px}
     .stat-val{font-size:22px;font-weight:700;color:var(--accent)}
     .stat-lbl{font-size:11px;color:var(--muted);margin-top:2px}
+
+    /* CHARTS */
+    .chart-card{background:var(--card);border:1px solid var(--border);border-radius:14px;padding:16px;margin-bottom:14px}
+    .chart-title{font-size:13px;font-weight:700;margin-bottom:14px;color:var(--text)}
+    .chart-title span{color:var(--accent)}
+    .chart-wrap{width:100%;overflow:hidden}
+    .chart-wrap svg{width:100%;display:block}
+    .chart-legend{display:flex;gap:14px;margin-top:10px}
+    .legend-item{display:flex;align-items:center;gap:5px;font-size:11px;color:var(--muted)}
+    .legend-dot{width:8px;height:8px;border-radius:50%;flex-shrink:0}
+    .no-data{text-align:center;padding:30px;color:var(--muted);font-size:13px}
   </style>
 </head>
 <body>
@@ -303,6 +314,11 @@
   </div>
 </div>
 
+<!-- STATS -->
+<div id="screen-stats" class="screen">
+  <div id="statCharts"></div>
+</div>
+
 <!-- BOTTOM NAV -->
 <div class="bnav">
   <div class="ni active" onclick="switchScreen('today',this)">
@@ -312,6 +328,10 @@
   <div class="ni" onclick="switchScreen('history',this)">
     <svg viewBox="0 0 24 24"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
     기록
+  </div>
+  <div class="ni" onclick="switchScreen('stats',this)">
+    <svg viewBox="0 0 24 24"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
+    통계
   </div>
   <div class="ni" onclick="switchScreen('settings',this)">
     <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
@@ -329,7 +349,7 @@
 
 <script>
 // ── STATE ──────────────────────────────────────────
-let subjects = JSON.parse(localStorage.getItem('subjects') || '["과목1","과목2","과목3","과목4","과목5"]');
+let subjects = JSON.parse(localStorage.getItem('subjects') || '["과목1","과목2","과목3"]');
 let records  = JSON.parse(localStorage.getItem('records')  || '{}');
 
 // ── INIT ───────────────────────────────────────────
@@ -571,15 +591,193 @@ function closeMOverlay(e) {
     document.getElementById('moverlay').classList.remove('open');
 }
 
+// ── STATS CHARTS ───────────────────────────────────
+function renderStats() {
+  const container = document.getElementById('statCharts');
+  const days = [];
+  for (let i = 6; i >= 0; i--) {
+    const d = new Date(); d.setDate(d.getDate() - i);
+    days.push(dateKey(d));
+  }
+  const dayLabels = days.map(k => {
+    const [y,m,d] = k.split('-').map(Number);
+    const names = ['일','월','화','수','목','금','토'];
+    return names[new Date(y,m-1,d).getDay()];
+  });
+
+  const hasAny = days.some(k => records[k]);
+  if (!hasAny) {
+    container.innerHTML = `<div class="no-data">📊<br><br>기록이 쌓이면<br>그래프가 나타나요</div>`;
+    return;
+  }
+
+  // ── 공부 시간 데이터
+  const studyMins = days.map(k => {
+    const r = records[k];
+    if (!r || !r.timeFrom) return 0;
+    return r.timeFrom.reduce((acc, from, i) => acc + (calcDuration(from, r.timeTo?.[i]||'') || 0), 0);
+  });
+  const maxStudy = Math.max(...studyMins, 60);
+
+  // ── 기상/취침 시간 데이터 (분 단위)
+  function timeToMins(t) {
+    if (!t) return null;
+    const [h,m] = t.split(':').map(Number);
+    return h * 60 + m;
+  }
+  const wakeMins  = days.map(k => timeToMins(records[k]?.wakeTime));
+  const sleepMins = days.map(k => {
+    const m = timeToMins(records[k]?.sleepTime);
+    // 취침이 자정 전이면 +24h로 처리 (예: 23:00 = 23*60)
+    return m;
+  });
+
+  const allTimes = [...wakeMins, ...sleepMins].filter(v => v !== null);
+  const minT = allTimes.length ? Math.max(0, Math.min(...allTimes) - 60) : 0;
+  const maxT = allTimes.length ? Math.min(1500, Math.max(...allTimes) + 60) : 1440;
+
+  // SVG 크기
+  const W = 320, H = 150, padL = 36, padR = 10, padT = 10, padB = 28;
+  const innerW = W - padL - padR;
+  const innerH = H - padT - padB;
+  const step = innerW / 6;
+
+  // ── 막대그래프 (공부시간)
+  const bars = days.map((_, i) => {
+    const mins = studyMins[i];
+    const bh = mins > 0 ? Math.max(4, (mins / maxStudy) * innerH) : 0;
+    const x = padL + i * step - 12;
+    const y = padT + innerH - bh;
+    const label = mins > 0 ? (mins >= 60 ? `${Math.floor(mins/60)}h${mins%60>0?mins%60+'m':''}` : `${mins}m`) : '';
+    return `
+      <rect x="${x}" y="${y}" width="24" height="${bh}" rx="4"
+        fill="${mins>0?'var(--accent)':'var(--border)'}"/>
+      ${mins>0?`<text x="${x+12}" y="${y-4}" text-anchor="middle" font-size="8" fill="var(--accent)">${label}</text>`:''}
+    `;
+  }).join('');
+
+  const xLabels = dayLabels.map((lbl, i) => {
+    const x = padL + i * step;
+    return `<text x="${x}" y="${H-6}" text-anchor="middle" font-size="10" fill="var(--muted)">${lbl}</text>`;
+  }).join('');
+
+  // Y축 눈금 (공부시간)
+  const yTicks = [0, 0.5, 1].map(p => {
+    const mins = Math.round(p * maxStudy);
+    const label = mins >= 60 ? `${Math.floor(mins/60)}h` : `${mins}m`;
+    const y = padT + innerH - p * innerH;
+    return `
+      <line x1="${padL}" y1="${y}" x2="${W-padR}" y2="${y}" stroke="var(--border)" stroke-width="1" stroke-dasharray="3"/>
+      <text x="${padL-4}" y="${y+4}" text-anchor="end" font-size="9" fill="var(--muted)">${label}</text>
+    `;
+  }).join('');
+
+  const barSVG = `
+    <svg viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg">
+      ${yTicks}
+      ${bars}
+      <line x1="${padL}" y1="${padT}" x2="${padL}" y2="${padT+innerH}" stroke="var(--border)" stroke-width="1"/>
+      <line x1="${padL}" y1="${padT+innerH}" x2="${W-padR}" y2="${padT+innerH}" stroke="var(--border)" stroke-width="1"/>
+      ${xLabels}
+    </svg>
+  `;
+
+  // ── 꺾은선 그래프 (기상/취침)
+  function tToY(mins) {
+    return padT + innerH - ((mins - minT) / (maxT - minT)) * innerH;
+  }
+  function tLabel(mins) {
+    const h = Math.floor(mins/60);
+    const m = mins%60;
+    return `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}`;
+  }
+
+  function makeLine(data, color) {
+    const pts = data.map((v,i) => v !== null ? `${padL + i*step},${tToY(v)}` : null).filter(Boolean);
+    if (pts.length < 2) return '';
+    // 연결선
+    let path = '';
+    let prev = null;
+    data.forEach((v, i) => {
+      if (v === null) { prev = null; return; }
+      const x = padL + i * step;
+      const y = tToY(v);
+      if (prev !== null) path += `<line x1="${prev.x}" y1="${prev.y}" x2="${x}" y2="${y}" stroke="${color}" stroke-width="2" opacity="0.6"/>`;
+      prev = {x, y};
+    });
+    // 점
+    const dots = data.map((v,i) => v===null?'': `<circle cx="${padL+i*step}" cy="${tToY(v)}" r="4" fill="${color}" stroke="var(--card)" stroke-width="2"/>`).join('');
+    return path + dots;
+  }
+
+  // Y축 눈금 (시간)
+  const yTickCount = 3;
+  const timeRange = maxT - minT;
+  const tickStep = Math.ceil(timeRange / yTickCount / 60) * 60;
+  const firstTick = Math.ceil(minT / tickStep) * tickStep;
+  let timeTicks = '';
+  for (let t = firstTick; t <= maxT; t += tickStep) {
+    const y = tToY(t);
+    if (y < padT || y > padT + innerH) continue;
+    timeTicks += `
+      <line x1="${padL}" y1="${y}" x2="${W-padR}" y2="${y}" stroke="var(--border)" stroke-width="1" stroke-dasharray="3"/>
+      <text x="${padL-4}" y="${y+4}" text-anchor="end" font-size="9" fill="var(--muted)">${tLabel(t)}</text>
+    `;
+  }
+
+  const lineSVG = `
+    <svg viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg">
+      ${timeTicks}
+      ${makeLine(wakeMins, '#F5A623')}
+      ${makeLine(sleepMins, '#7B6FE8')}
+      <line x1="${padL}" y1="${padT}" x2="${padL}" y2="${padT+innerH}" stroke="var(--border)" stroke-width="1"/>
+      <line x1="${padL}" y1="${padT+innerH}" x2="${W-padR}" y2="${padT+innerH}" stroke="var(--border)" stroke-width="1"/>
+      ${xLabels}
+    </svg>
+  `;
+
+  // 주간 요약
+  const totalStudyH = studyMins.reduce((a,b)=>a+b,0);
+  const studyDays = studyMins.filter(m=>m>0).length;
+  const avgMins = studyDays > 0 ? Math.round(totalStudyH / studyDays) : 0;
+
+  container.innerHTML = `
+    <div class="chart-card">
+      <div class="chart-title">📊 일별 공부 시간 <span>(최근 7일)</span></div>
+      <div class="chart-wrap">${barSVG}</div>
+      <div style="display:flex;gap:16px;margin-top:10px">
+        <div class="stat-box" style="flex:1;padding:10px 12px">
+          <div class="stat-val" style="font-size:18px">${fmtDuration(totalStudyH)}</div>
+          <div class="stat-lbl">7일 총 공부</div>
+        </div>
+        <div class="stat-box" style="flex:1;padding:10px 12px">
+          <div class="stat-val" style="font-size:18px">${fmtDuration(avgMins)}</div>
+          <div class="stat-lbl">일 평균 (기록일 기준)</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="chart-card">
+      <div class="chart-title">🌅 기상 · 취침 시간 <span>(최근 7일)</span></div>
+      <div class="chart-wrap">${lineSVG}</div>
+      <div class="chart-legend">
+        <div class="legend-item"><div class="legend-dot" style="background:#F5A623"></div>기상 시간</div>
+        <div class="legend-item"><div class="legend-dot" style="background:#7B6FE8"></div>취침 시간</div>
+      </div>
+    </div>
+  `;
+}
+
 // ── NAVIGATION ─────────────────────────────────────
 function switchScreen(name, el) {
   document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
   document.querySelectorAll('.ni').forEach(n => n.classList.remove('active'));
   document.getElementById(`screen-${name}`).classList.add('active');
   el.classList.add('active');
-  const titles = {today:'오늘의 기록', history:'공부 기록', settings:'설정'};
+  const titles = {today:'오늘의 기록', history:'공부 기록', stats:'통계', settings:'설정'};
   updateHeader(titles[name]);
   if (name === 'history') renderHistory();
+  if (name === 'stats') renderStats();
   if (name === 'settings') renderSubjectSettings();
 }
 
