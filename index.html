@@ -227,6 +227,16 @@
     .stat-val{font-size:22px;font-weight:700;color:var(--accent)}
     .stat-lbl{font-size:11px;color:var(--muted);margin-top:2px}
 
+    /* 조 범위 입력 */
+    .jo-row{display:flex;align-items:center;gap:5px;margin-bottom:8px;flex-wrap:nowrap}
+    .jo-label{font-size:13px;color:var(--muted);flex-shrink:0;white-space:nowrap}
+    input.jo-input{
+      background:var(--card2);border:1px solid var(--border);
+      border-radius:8px;color:var(--text);font-size:17px;font-weight:700;
+      font-family:inherit;width:56px;padding:6px 4px;text-align:center;outline:none;
+    }
+    input.jo-input:focus{border-color:var(--accent)}
+
     /* CHARTS */
     .chart-card{background:var(--card);border:1px solid var(--border);border-radius:14px;padding:16px;margin-bottom:14px}
     .chart-title{font-size:13px;font-weight:700;margin-bottom:14px;color:var(--text)}
@@ -440,7 +450,13 @@ function renderSubjectCards() {
         <div class="sc-name">${name}</div>
         <div class="sc-badge">과목 ${i+1}</div>
       </div>
-      <textarea class="snote" id="note_${i}" placeholder="오늘 공부한 범위나 내용을 기록해요" rows="2"></textarea>
+      <div class="jo-row">
+        <span class="jo-label">제</span>
+        <input type="number" class="jo-input" id="start_${i}" placeholder="1" min="1">
+        <span class="jo-label">조 ~ 제</span>
+        <input type="number" class="jo-input" id="end_${i}" placeholder="50" min="1">
+        <span class="jo-label">조</span>
+      </div>
       <div class="fromto-row">
         <span class="fromto-label">⏱</span>
         <input type="time" class="ftime" id="from_${i}" oninput="onTimeChange(${i})">
@@ -485,28 +501,31 @@ function loadTodayData() {
   if (r.wakeTime)  document.getElementById('wakeTime').value  = r.wakeTime;
   if (r.sleepTime) document.getElementById('sleepTime').value = r.sleepTime;
   subjects.forEach((_, i) => {
-    const n = document.getElementById(`note_${i}`);
+    const s = document.getElementById(`start_${i}`);
+    const e = document.getElementById(`end_${i}`);
     const f = document.getElementById(`from_${i}`);
     const t = document.getElementById(`to_${i}`);
-    if (n && r.notes?.[i] !== undefined) n.value = r.notes[i];
-    if (f && r.timeFrom?.[i]) f.value = r.timeFrom[i];
-    if (t && r.timeTo?.[i])   t.value = r.timeTo[i];
+    if (s && r.rangeStart?.[i]) s.value = r.rangeStart[i];
+    if (e && r.rangeEnd?.[i])   e.value = r.rangeEnd[i];
+    if (f && r.timeFrom?.[i])   f.value = r.timeFrom[i];
+    if (t && r.timeTo?.[i])     t.value = r.timeTo[i];
     onTimeChange(i);
   });
 }
 
 function saveToday() {
-  const timeFrom = subjects.map((_, i) => document.getElementById(`from_${i}`)?.value || '');
-  const timeTo   = subjects.map((_, i) => document.getElementById(`to_${i}`)?.value   || '');
-  const hours    = subjects.map((_, i) => {
+  const timeFrom   = subjects.map((_, i) => document.getElementById(`from_${i}`)?.value    || '');
+  const timeTo     = subjects.map((_, i) => document.getElementById(`to_${i}`)?.value      || '');
+  const rangeStart = subjects.map((_, i) => document.getElementById(`start_${i}`)?.value   || '');
+  const rangeEnd   = subjects.map((_, i) => document.getElementById(`end_${i}`)?.value     || '');
+  const hours      = subjects.map((_, i) => {
     const mins = calcDuration(timeFrom[i], timeTo[i]);
     return mins !== null ? +(mins / 60).toFixed(2) : '';
   });
   records[todayKey()] = {
     wakeTime:  document.getElementById('wakeTime').value,
     sleepTime: document.getElementById('sleepTime').value,
-    notes: subjects.map((_, i) => document.getElementById(`note_${i}`)?.value || ''),
-    timeFrom, timeTo, hours,
+    timeFrom, timeTo, rangeStart, rangeEnd, hours,
     savedAt: new Date().toISOString()
   };
   localStorage.setItem('records', JSON.stringify(records));
@@ -526,7 +545,7 @@ function renderHistory() {
     const r = records[key];
     const date = fmtDate(key);
     const tags = subjects.map((name, i) => {
-      const filled = r.notes?.[i]?.trim();
+      const filled = r.rangeStart?.[i] || r.timeFrom?.[i];
       return `<span class="htag ${filled?'':'empty'}">${name}</span>`;
     }).join('');
     return `
@@ -553,17 +572,24 @@ function fmtDate(key) {
 function openDetail(key) {
   const r = records[key];
   const subs = subjects.map((name, i) => {
-    const note = r.notes?.[i] || '';
-    const from = r.timeFrom?.[i] || '';
-    const to   = r.timeTo?.[i]   || '';
-    const mins = calcDuration(from, to);
+    const start = r.rangeStart?.[i];
+    const end   = r.rangeEnd?.[i];
+    const from  = r.timeFrom?.[i] || '';
+    const to    = r.timeTo?.[i]   || '';
+    const mins  = calcDuration(from, to);
+    const rangeStr = start || end
+      ? `제 ${start||'?'}조 ~ 제 ${end||'?'}조`
+      : '';
     const timeStr = from && to
       ? `${from} → ${to}${mins ? ' · ' + fmtDuration(mins) : ''}`
       : '';
+    const hasData = rangeStr || timeStr;
     return `
       <div class="msubj">
-        <div class="mn">${name}${timeStr ? ` <span style="color:var(--muted);font-size:11px;font-weight:400">${timeStr}</span>` : ''}</div>
-        <div class="mnote${note.trim()?' ok':''}">${note.trim() || '기록 없음'}</div>
+        <div class="mn">${name}</div>
+        ${rangeStr ? `<div class="mnote ok" style="font-size:15px;font-weight:700">${rangeStr}</div>` : ''}
+        ${timeStr  ? `<div class="mnote" style="color:var(--muted);font-size:12px;margin-top:2px">${timeStr}</div>` : ''}
+        ${!hasData ? `<div class="mnote">기록 없음</div>` : ''}
       </div>
     `;
   }).join('');
@@ -581,9 +607,88 @@ function openDetail(key) {
       <div class="mlabel">과목별 기록</div>
       ${subs}
     </div>
+    <button onclick="openEdit('${key}')" style="width:100%;padding:14px;background:var(--accent-dim);border:1px solid var(--accent);color:var(--accent);font-size:15px;font-weight:700;font-family:inherit;border-radius:12px;cursor:pointer;margin-top:4px">✏️ 수정하기</button>
     <button class="mclose" onclick="document.getElementById('moverlay').classList.remove('open')">닫기</button>
   `;
   document.getElementById('moverlay').classList.add('open');
+}
+
+function openEdit(key) {
+  const r = records[key] || {};
+  const inp = (id, val, type='text', extra='') =>
+    `<input type="${type}" id="${id}" value="${val||''}" ${extra} style="background:var(--card);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:15px;font-weight:700;font-family:inherit;padding:6px 8px;outline:none;text-align:center;width:100%">`;
+
+  const subjRows = subjects.map((name, i) => `
+    <div class="msubj">
+      <div class="mn" style="margin-bottom:8px">${name}</div>
+      <div style="display:flex;align-items:center;gap:5px;margin-bottom:8px">
+        <span style="font-size:13px;color:var(--muted);white-space:nowrap">제</span>
+        <input type="number" id="e_start_${i}" value="${r.rangeStart?.[i]||''}" placeholder="1" min="1"
+          style="background:var(--card);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:16px;font-weight:700;font-family:inherit;width:56px;padding:6px 4px;text-align:center;outline:none">
+        <span style="font-size:13px;color:var(--muted);white-space:nowrap">조 ~ 제</span>
+        <input type="number" id="e_end_${i}" value="${r.rangeEnd?.[i]||''}" placeholder="50" min="1"
+          style="background:var(--card);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:16px;font-weight:700;font-family:inherit;width:56px;padding:6px 4px;text-align:center;outline:none">
+        <span style="font-size:13px;color:var(--muted);white-space:nowrap">조</span>
+      </div>
+      <div style="display:flex;align-items:center;gap:6px">
+        <span style="font-size:12px;color:var(--muted)">⏱</span>
+        <input type="time" id="e_from_${i}" value="${r.timeFrom?.[i]||''}"
+          style="background:var(--card);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:13px;font-weight:600;padding:5px 6px;outline:none;font-family:inherit;width:90px;text-align:center">
+        <span style="color:var(--muted)">→</span>
+        <input type="time" id="e_to_${i}" value="${r.timeTo?.[i]||''}"
+          style="background:var(--card);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:13px;font-weight:600;padding:5px 6px;outline:none;font-family:inherit;width:90px;text-align:center">
+      </div>
+    </div>
+  `).join('');
+
+  document.getElementById('mContent').innerHTML = `
+    <div class="mhandle"></div>
+    <div class="mdate">${fmtDate(key)} <span style="color:var(--accent);font-size:13px;font-weight:400">수정 중</span></div>
+    <div class="msec">
+      <div class="mlabel">수면</div>
+      <div class="mtimes">
+        <div class="mtime-box" style="flex:1;text-align:left;padding:10px 12px">
+          <div class="ml" style="margin-bottom:6px">🌅 기상</div>
+          <input type="time" id="e_wake" value="${r.wakeTime||''}"
+            style="background:transparent;border:none;color:var(--text);font-size:20px;font-weight:700;width:100%;outline:none;font-family:inherit">
+        </div>
+        <div class="mtime-box" style="flex:1;text-align:left;padding:10px 12px">
+          <div class="ml" style="margin-bottom:6px">🌙 취침</div>
+          <input type="time" id="e_sleep" value="${r.sleepTime||''}"
+            style="background:transparent;border:none;color:var(--text);font-size:20px;font-weight:700;width:100%;outline:none;font-family:inherit">
+        </div>
+      </div>
+    </div>
+    <div class="msec">
+      <div class="mlabel">과목별 기록</div>
+      ${subjRows}
+    </div>
+    <button onclick="saveEdit('${key}')" style="width:100%;padding:14px;background:var(--accent);color:#0F1724;font-size:15px;font-weight:700;font-family:inherit;border:none;border-radius:12px;cursor:pointer;margin-top:4px">저장</button>
+    <button class="mclose" onclick="openDetail('${key}')">취소</button>
+  `;
+}
+
+function saveEdit(key) {
+  const timeFrom   = subjects.map((_,i) => document.getElementById(`e_from_${i}`)?.value  || '');
+  const timeTo     = subjects.map((_,i) => document.getElementById(`e_to_${i}`)?.value    || '');
+  const rangeStart = subjects.map((_,i) => document.getElementById(`e_start_${i}`)?.value || '');
+  const rangeEnd   = subjects.map((_,i) => document.getElementById(`e_end_${i}`)?.value   || '');
+  const hours      = subjects.map((_,i) => {
+    const mins = calcDuration(timeFrom[i], timeTo[i]);
+    return mins !== null ? +(mins/60).toFixed(2) : '';
+  });
+  records[key] = {
+    ...records[key],
+    wakeTime:  document.getElementById('e_wake')?.value  || '',
+    sleepTime: document.getElementById('e_sleep')?.value || '',
+    timeFrom, timeTo, rangeStart, rangeEnd, hours,
+    savedAt: new Date().toISOString()
+  };
+  localStorage.setItem('records', JSON.stringify(records));
+  document.getElementById('moverlay').classList.remove('open');
+  renderStreak();
+  if (document.getElementById('screen-history').classList.contains('active')) renderHistory();
+  showToast('수정됐어요 ✓');
 }
 
 function closeMOverlay(e) {
